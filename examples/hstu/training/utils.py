@@ -39,6 +39,7 @@ from training.gin_config_args import (
     NetworkArgs,
     OptimizerArgs,
     TensorModelParallelArgs,
+    MixedPrecisionArgs,
     TrainerArgs,
 )
 
@@ -91,7 +92,7 @@ def cal_flops(hstu_config: HSTUConfig, seqlens: List[torch.Tensor]) -> int:
 
 
 def create_hstu_config(
-    network_args: NetworkArgs, tensor_model_parallel_args: TensorModelParallelArgs
+    network_args: NetworkArgs, tensor_model_parallel_args: TensorModelParallelArgs, mp_args: MixedPrecisionArgs
 ):
     dtype = None
     if network_args.dtype_str == "bfloat16":
@@ -129,6 +130,13 @@ def create_hstu_config(
         )
     else:
         hstu_preprocessing_config = None
+
+    if mp_args.enabled:
+        # Matching Megatron FP8 arguments
+        fp8 = mp_args.linear_scaling_precision  # Flag to set both te linear and precision
+        fp8_recipe = mp_args.linear_recipe
+        hstu_attn_quantization_mode = mp_args.hstu_attn_quantization_map[mp_args.hstu_attn_quantization_mode]
+
     return get_hstu_config(
         hidden_size=network_args.hidden_size,
         kv_channels=network_args.kv_channels,
@@ -139,12 +147,15 @@ def create_hstu_config(
         is_causal=network_args.is_causal,
         dtype=dtype,
         kernel_backend=kernel_backend,
+        hstu_attn_quantization_mode=hstu_attn_quantization_mode,
         hstu_preprocessing_config=hstu_preprocessing_config,
         position_encoding_config=position_encoding_config,
         target_group_size=network_args.target_group_size,
         hstu_layer_type=layer_type,
         recompute_input_layernorm=network_args.recompute_input_layernorm,
         recompute_input_silu=network_args.recompute_input_silu,
+        fp8 = fp8,
+        fp8_recipe = fp8_recipe,
     )
 
 

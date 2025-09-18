@@ -111,6 +111,7 @@ class HSTUConfig(TransformerConfig):
 
     kernel_backend: KernelBackend = KernelBackend.CUTLASS
     hstu_layer_type: HSTULayerType = HSTULayerType.FUSED  # DEBUG|NATIVE|FUSED
+    hstu_attn_quantization_mode: int = -1 # Default to -1, which means no fp8 for hstu attn
 
     target_group_size: int = 1
     learnable_input_layernorm: bool = True
@@ -144,6 +145,7 @@ def get_hstu_config(
     norm_epsilon=1e-5,
     is_causal: bool = True,
     kernel_backend: KernelBackend = KernelBackend.CUTLASS,
+    hstu_attn_quantization_mode: int = -1,
     target_group_size: int = 1,
     hstu_layer_type: HSTULayerType = HSTULayerType.FUSED,
     learnable_input_layernorm: bool = True,
@@ -154,6 +156,7 @@ def get_hstu_config(
     is_inference: bool = False,
     add_uvqk_bias: bool = True,
     fuse_norm_mul_dropout: bool = True,
+    **transformer_config_kwargs,
 ) -> HSTUConfig:
     """
     Create the HSTU configuration.
@@ -223,4 +226,6 @@ def get_hstu_config(
         add_uvqk_bias=add_uvqk_bias,
         is_inference=is_inference,
         fuse_norm_mul_dropout=fuse_norm_mul_dropout,
+        hstu_attn_quantization_mode=hstu_attn_quantization_mode,
+        **transformer_config_kwargs,
     )

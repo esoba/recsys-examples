@@ -40,6 +40,7 @@ from training import (
     NetworkArgs,
     OptimizerArgs,
     TensorModelParallelArgs,
+    MixedPrecisionArgs,
     TrainerArgs,
     create_dynamic_optitons_dict,
     create_embedding_configs,
@@ -83,6 +84,7 @@ dataset_args, embedding_args = get_dataset_and_embedding_args()
 network_args = NetworkArgs()
 optimizer_args = OptimizerArgs()
 tp_args = TensorModelParallelArgs()
+mp_args = MixedPrecisionArgs()
 
 
 def create_ranking_config() -> RankingConfig:
@@ -110,7 +112,7 @@ def main():
     print_rank_0(
         f"distributed env initialization done. Free cuda memory: {free_memory / (1024 ** 2):.2f} MB"
     )
-    hstu_config = create_hstu_config(network_args, tp_args)
+    hstu_config = create_hstu_config(network_args, tp_args, mp_args)
     task_config = create_ranking_config()
     model = get_ranking_model(hstu_config=hstu_config, task_config=task_config)
 
