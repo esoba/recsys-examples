@@ -52,6 +52,15 @@ from training import (
     train_with_pipeline,
 )
 
+try:
+    import transformer_engine.pytorch as te
+    from transformer_engine.common.recipe import Format, DelayedScaling, Float8CurrentScaling, Float8BlockScaling
+    use_te = True
+    format_map = {'e4m3': Format.E4M3, 'e5m2': Format.E5M2, 'hybrid': Format.HYBRID}
+except:
+    warnings.warn("transformer_engine.pytorch is not installed, FP8 mixed precision will not be supported")
+    use_te = False
+
 
 @gin.configurable
 @dataclass
@@ -86,6 +95,14 @@ optimizer_args = OptimizerArgs()
 tp_args = TensorModelParallelArgs()
 mp_args = MixedPrecisionArgs()
 
+if mp_args.enabled and not use_te:
+    assert False, "FP8 mixed precision only supported with Transformer Engine"
+
+if mp_args.enabled:
+    fp8_mp_kwargs = {
+        "recipe": mp_args.linear_recipe,
+        "fp8_format": format_map[mp_args.linear_scaling_precision],
+    }
 
 def create_ranking_config() -> RankingConfig:
     ranking_args = RankingArgs()
@@ -158,6 +175,8 @@ def main():
             model_train,
             dense_optimizer,
             device=torch.device("cuda", torch.cuda.current_device()),
+            te_mixed_precision=mp_args.enabled,
+            **fp8_mp_kwargs
         )
     else:
         pipeline = JaggedMegatronTrainNonePipeline(

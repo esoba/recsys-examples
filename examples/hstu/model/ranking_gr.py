@@ -32,7 +32,7 @@ class RankingGR(BaseModel):
     """
     A class representing the ranking model. Inherits from BaseModel. A ranking model consists of
     a sparse architecture and a dense architecture. A ranking model is able to process multiple labels
-    and thus has multiple logit dimensions. Each label is associated with a loss functoin (e.g. BCE, CE).
+    and thus has multiple logit dimensions. Each label is associated with a loss function (e.g. BCE, CE).
 
     Args:
         hstu_config (HSTUConfig): The HSTU configuration.
@@ -59,6 +59,7 @@ class RankingGR(BaseModel):
             task_config.prediction_head_act_type,
             task_config.prediction_head_bias,
             device=self._device,
+            te_linear = hstu_config.fp8 is not None,
         )
 
         # TODO, make reduction configurable
