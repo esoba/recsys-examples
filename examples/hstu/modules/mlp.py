@@ -14,6 +14,7 @@
 # limitations under the License.
 from functools import wraps
 from typing import List, Optional
+import warnings
 
 import torch
 
@@ -35,6 +36,14 @@ except:
         return decorator
 
     BaseModule = torch.nn.Module
+
+try:
+    import transformer_engine.pytorch as te
+    use_te = True
+except:
+    warnings.warn("transformer_engine.pytorch is not installed, FP8 mixed precision will not be supported")
+    use_te = False
+
 from modules.utils import init_mlp_weights_optional_bias
 
 
@@ -59,6 +68,7 @@ class MLP(BaseModule):  # type: ignore
         bias: bool = True,
         device: Optional[torch.device] = None,
         dtype: torch.dtype = torch.float32,
+        te_linear: bool = False,
     ) -> None:
         if BaseModule is torch.nn.Module:
             super().__init__()
@@ -72,11 +82,17 @@ class MLP(BaseModule):  # type: ignore
         else:
             raise ValueError(f"Activation function {activation} not supported")
 
+        if not use_te and te_linear:
+            assert False, "transformer_engine.pytorch is not installed, but te_linear = True"
+        elif te_linear and use_te:
+            mlp_linear = te.Linear
+        else:
+            mlp_linear = torch.nn.Linear
         layers = []
         for i in range(len(layer_sizes)):
             layers.extend(
                 [
-                    torch.nn.Linear(
+                    mlp_linear(
                         layer_sizes[i - 1] if i > 0 else in_size,
                         layer_sizes[i],
                         bias=bias,
