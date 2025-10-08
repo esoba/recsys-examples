@@ -34,4 +34,5 @@ TensorModelParallelArgs.tensor_model_parallel_size = 1
 
 MixedPrecisionArgs.mixed_precision_dtype = "fp8"
 MixedPrecisionArgs.linear_recipe = "tensorwise"
-MixedPrecisionArgs.hstu_attn_recipe = "bf16"
+MixedPrecisionArgs.linear_scaling_precision = "hybrid"
+MixedPrecisionArgs.hstu_attn_quantization_mode = "bf16"

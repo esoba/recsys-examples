@@ -103,6 +103,8 @@ if mp_args.enabled:
         "recipe": mp_args.linear_recipe,
         "fp8_format": format_map[mp_args.linear_scaling_precision],
     }
+else:
+    fp8_mp_kwargs = {}
 
 def create_ranking_config() -> RankingConfig:
     ranking_args = RankingArgs()

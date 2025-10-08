@@ -53,13 +53,13 @@ class RankingGR(BaseModel):
         self._embedding_collection = ShardedEmbedding(task_config.embedding_configs)
 
         self._hstu_block = HSTUBlock(hstu_config)
+        print("fp8 from config", hstu_config.fp8)
         self._mlp = MLP(
             hstu_config.hidden_size,
             task_config.prediction_head_arch,
             task_config.prediction_head_act_type,
             task_config.prediction_head_bias,
             device=self._device,
-            te_linear = hstu_config.fp8 is not None,
         )
 
         # TODO, make reduction configurable

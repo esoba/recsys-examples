@@ -133,9 +133,13 @@ def create_hstu_config(
 
     if mp_args.enabled:
         # Matching Megatron FP8 arguments
-        fp8 = mp_args.linear_scaling_precision  # Flag to set both te linear and precision
+        fp8 = mp_args.linear_scaling_precision  # Flag to set both te linear and precision https://github.com/NVIDIA/Megatron-LM/blob/main/megatron/core/transformer/transformer_config.py
         fp8_recipe = mp_args.linear_recipe
         hstu_attn_quantization_mode = mp_args.hstu_attn_quantization_map[mp_args.hstu_attn_quantization_mode]
+    else:
+        fp8 = None
+        fp8_recipe = None
+        hstu_attn_quantization_mode = -1
 
     return get_hstu_config(
         hidden_size=network_args.hidden_size,

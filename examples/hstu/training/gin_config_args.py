@@ -12,9 +12,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from ast import Dict
-from dataclasses import dataclass
-from typing import List, Optional, Union, Literal
+
+from dataclasses import dataclass, field
+from typing import List, Optional, Union, Literal, Dict
 
 import gin
 
@@ -181,11 +181,23 @@ class TensorModelParallelArgs:
 @gin.configurable
 @dataclass
 class MixedPrecisionArgs:
-    mixed_precision_dtype: Optional[Literal["fp8"]] = None  # 
+    mixed_precision_dtype: Optional[Literal["fp8"]] = None 
     linear_recipe: Literal["delayed", "tensorwise", "blockwise"] = "tensorwise"
     linear_scaling_precision: Literal["hybrid", "e4m3", "e5m2"] = "hybrid"
-    hstu_attn_quantization_mode: Literal["1xdim", "128x1", "per-block", "per-head", "per-batch", "per-tensor"] = "1xdim"
-    hstu_attn_quantization_map: Dict[str, int] = {"bf16":-1, "fp8": 0, "1xdim": 1, "128x1": 2, "per-block": 3, "per-head": 4, "per-batch": 5, "per-tensor": 6}
+    enable_fp8_for_prediction_head: bool = False  # Experimental feature - prediction head has variable batch size and TE requires batch size to be divisible by 8
+    hstu_attn_quantization_mode: Literal["bf16", "fp8", "1xdim", "128x1", "per-block", "per-head", "per-batch", "per-tensor"] = "bf16"
+    hstu_attn_quantization_map: Dict[str, int] = field(
+        default_factory=lambda: {
+            "bf16": -1,
+            "fp8": 0,
+            "1xdim": 1,
+            "128x1": 2,
+            "per-block": 3,
+            "per-head": 4,
+            "per-batch": 5,
+            "per-tensor": 6,
+        }
+    )
     
     def __post_init__(self):
         if self.mixed_precision_dtype is None:
