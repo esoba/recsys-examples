@@ -156,6 +156,7 @@ class FusedHSTULayer(MegatronModule):
             wgrad_event=self._wgrad_event,
             recompute_input_layernorm=self._recompute_input_layernorm,
             recompute_input_silu=self._recompute_input_silu,
+            quant_mode = -1,  # FusedHSTULayer using C++ API for HSTU attn, passthrough quant_mode when python API is used
         )
         return JaggedData(
             values=output,
