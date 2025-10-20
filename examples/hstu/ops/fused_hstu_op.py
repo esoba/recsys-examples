@@ -534,6 +534,7 @@ class FusedHSTULayerFunction(torch.autograd.Function):
         None,
         None,
         None,
+        None,  # gradient for quant_mode
     ]:
         def _linear_residual_bwd(
             grad_output,
@@ -942,6 +943,7 @@ class FusedHSTULayerFunction(torch.autograd.Function):
             None,
             None,
             None,
+            None,  # gradient for quant_mode
         )
 
 

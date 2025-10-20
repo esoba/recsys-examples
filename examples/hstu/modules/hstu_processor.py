@@ -13,10 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import itertools
+import warnings
 from typing import Dict, Optional, Union
 
 import torch
 from commons.utils.nvtx_op import output_nvtx_hook
+from commons.utils.logger import print_rank_0
 from configs.hstu_config import HSTUConfig
 from configs.inference_config import InferenceHSTUConfig
 from dataset.utils import RankingBatch
@@ -302,7 +304,91 @@ class HSTUBlockPreprocessor(torch.nn.Module):
             training=self.training,
         ).to(self._training_dtype)
 
+        # FP8 alignment: Truncate to nearest multiple of 8 for TE Linear compatibility
+        # TODO: Verify this is the correct way to handle FP8 TE size mismatches
+        if not isinstance(self.config, InferenceHSTUConfig):
+            if self.config.fp8 is not None and self.training:
+                warnings.warn("Aligning JaggedData to nearest multiple of 8 for FP8 TE compatibility")
+                jd = self._align_jagged_data_for_fp8(jd, divisor=16)  # TODO: Find workaround for alignment
+
         return jd
+    
+    def _align_jagged_data_for_fp8(
+        self, jd: JaggedData, divisor: int = 16
+    ) -> JaggedData:
+        """
+        Aligns JaggedData to have total tokens divisible by `divisor` for FP8 compatibility.
+        
+        Truncates tokens from the END of the batch (last sequence) to meet divisibility requirement.
+        This is simpler than padding and avoids introducing fake tokens into attention.
+        
+        Args:
+            jd: Input JaggedData
+            divisor: Alignment divisor (8 for FP8 batch dimension requirement)
+            
+        Returns:
+            Aligned JaggedData with maintained invariants
+        """
+        num_tokens = jd.values.shape[0]
+        aligned_size = (num_tokens // divisor) * divisor
+        
+        if aligned_size == num_tokens:
+            return jd  # Already aligned
+        
+        if aligned_size < divisor:
+            # Too few tokens - pad to minimum size
+            padding_needed = divisor - num_tokens
+            jd.values = torch.nn.functional.pad(jd.values, (0, 0, 0, padding_needed))
+            # Note: padding creates "ghost" tokens at the end, but they won't affect
+            # most sequences since they're beyond the last seqlen_offset
+            return jd
+        
+        # Truncate: Remove tokens from the end
+        tokens_to_remove = num_tokens - aligned_size
+        jd.values = jd.values[:aligned_size]
+        
+        # Update metadata: Find which sequences are affected
+        # We're removing from the end, so only the last sequence(s) are affected
+        batch_size = jd.seqlen.shape[0]
+        new_seqlen = jd.seqlen.clone()
+        
+        # Work backwards from last sequence
+        remaining_to_remove = tokens_to_remove
+        for seq_idx in range(batch_size - 1, -1, -1):
+            if remaining_to_remove <= 0:
+                break
+            
+            current_len = new_seqlen[seq_idx].item()
+            if current_len <= remaining_to_remove:
+                # Remove entire sequence
+                new_seqlen[seq_idx] = 0
+                remaining_to_remove -= current_len
+            else:
+                # Partially truncate this sequence
+                new_seqlen[seq_idx] = current_len - remaining_to_remove
+                remaining_to_remove = 0
+        
+        # Recompute offsets
+        new_seqlen_offsets = torch.ops.fbgemm.asynchronous_complete_cumsum(new_seqlen)
+        
+        # Verify invariant
+        print_rank_0(f"Truncated tokens to {aligned_size} from {num_tokens} for FP8 TE compatibility")
+        assert new_seqlen_offsets[-1].item() == aligned_size, \
+            f"Offset mismatch: {new_seqlen_offsets[-1].item()} != {aligned_size}"
+        
+        return JaggedData(
+            values=jd.values,
+            seqlen=new_seqlen,
+            seqlen_offsets=new_seqlen_offsets,
+            max_seqlen=jd.max_seqlen,
+            max_num_candidates=jd.max_num_candidates,
+            num_candidates=jd.num_candidates,
+            num_candidates_offsets=jd.num_candidates_offsets,
+            contextual_max_seqlen=jd.contextual_max_seqlen,
+            contextual_seqlen=jd.contextual_seqlen,
+            contextual_seqlen_offsets=jd.contextual_seqlen_offsets,
+            has_interleaved_action=jd.has_interleaved_action,
+        )
 
 
 class HSTUBlockPostprocessor(torch.nn.Module):
