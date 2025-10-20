@@ -305,76 +305,95 @@ class HSTUBlockPreprocessor(torch.nn.Module):
         ).to(self._training_dtype)
 
         # FP8 alignment: Truncate to nearest multiple of 16 for TE Linear fwd + bwdcompatibility
-        # TODO: Add padding methodology as well
         if not isinstance(self.config, InferenceHSTUConfig):
             if self.config.fp8 is not None and self.training:
                 warnings.warn("Aligning JaggedData to nearest multiple of 16 for FP8 TE fwd + bwd compatibility")
-                jd = self._align_jagged_data_for_fp8(jd, divisor=16)
+                jd = self._align_jagged_data_for_fp8(jd, fp8_alignment_mode=self.config.fp8_alignment_mode)
 
         return jd
-    
+
     def _align_jagged_data_for_fp8(
-        self, jd: JaggedData, divisor: int = 16
+        self, jd: JaggedData, fp8_alignment_mode: str = "truncate"
     ) -> JaggedData:
         """
-        Aligns JaggedData to have total tokens divisible by `divisor` for FP8 compatibility.
+        Aligns JaggedData to have total tokens divisible by 16 for FP8 compatibility.
         
-        Truncates tokens from the END of the batch (last sequence) to meet divisibility requirement.
-        This is simpler than padding and avoids introducing fake tokens into attention.
+        Either truncates or pads tokens from the end of the batch (last sequence) to meet Transformer Engine divisibility requirement.
         
         Args:
             jd: Input JaggedData
-            divisor: Alignment divisor (16 for FP8 batch dimension requirement)
+            fp8_alignment_mode: Alignment mode ("truncate" or "pad")
             
         Returns:
             Aligned JaggedData with maintained invariants
         """
         num_tokens = jd.values.shape[0]
-        aligned_size = (num_tokens // divisor) * divisor
         
-        if aligned_size == num_tokens:
-            return jd  # Already aligned
+        # Check if already aligned
+        if num_tokens % 16 == 0:
+            return jd
         
-        if aligned_size < divisor:
+        # Calculate aligned size based on mode
+        if fp8_alignment_mode == "truncate":
+            # Round down to previous multiple of 16
+            aligned_size = (num_tokens // 16) * 16
+        elif fp8_alignment_mode == "pad":
+            # Round up to next multiple of 16
+            aligned_size = ((num_tokens + 15) // 16) * 16
+        else:
+            raise ValueError(f"Invalid fp8 alignment mode: {fp8_alignment_mode}")
+        
+        if aligned_size < 16:
             # Too few tokens - pad to minimum size
-            padding_needed = divisor - num_tokens
+            padding_needed = 16 - num_tokens
             jd.values = torch.nn.functional.pad(jd.values, (0, 0, 0, padding_needed))
-            # Note: padding creates "ghost" tokens at the end, but they won't affect
-            # most sequences since they're beyond the last seqlen_offset
             return jd
         
         # Truncate: Remove tokens from the end
-        tokens_to_remove = num_tokens - aligned_size
-        jd.values = jd.values[:aligned_size]
-        
-        # Update metadata: Find which sequences are affected
-        # We're removing from the end, so only the last sequence(s) are affected
-        batch_size = jd.seqlen.shape[0]
-        new_seqlen = jd.seqlen.clone()
-        
-        # Work backwards from last sequence
-        remaining_to_remove = tokens_to_remove
-        for seq_idx in range(batch_size - 1, -1, -1):
-            if remaining_to_remove <= 0:
-                break
+        if fp8_alignment_mode == "truncate":
+            tokens_to_remove = num_tokens - aligned_size
+            jd.values = jd.values[:aligned_size]
             
-            current_len = new_seqlen[seq_idx].item()
-            if current_len <= remaining_to_remove:
-                # Remove entire sequence
-                new_seqlen[seq_idx] = 0
-                remaining_to_remove -= current_len
-            else:
-                # Partially truncate this sequence
-                new_seqlen[seq_idx] = current_len - remaining_to_remove
-                remaining_to_remove = 0
-        
-        # Recompute offsets
-        new_seqlen_offsets = torch.ops.fbgemm.asynchronous_complete_cumsum(new_seqlen)
-        
-        # Verify invariant
-        print_rank_0(f"Truncated tokens to {aligned_size} from {num_tokens} for FP8 TE compatibility")
-        assert new_seqlen_offsets[-1].item() == aligned_size, \
-            f"Offset mismatch: {new_seqlen_offsets[-1].item()} != {aligned_size}"
+            # Update metadata: Find which sequences are affected
+            # We're removing from the end, so only the last sequence(s) are affected
+            batch_size = jd.seqlen.shape[0]
+            new_seqlen = jd.seqlen.clone()
+            
+            # Work backwards from last sequence
+            remaining_to_remove = tokens_to_remove
+            for seq_idx in range(batch_size - 1, -1, -1):
+                if remaining_to_remove <= 0:
+                    break
+                
+                current_len = new_seqlen[seq_idx].item()
+                if current_len <= remaining_to_remove:
+                    # Remove entire sequence
+                    new_seqlen[seq_idx] = 0
+                    remaining_to_remove -= current_len
+                else:
+                    # Partially truncate this sequence
+                    new_seqlen[seq_idx] = current_len - remaining_to_remove
+                    remaining_to_remove = 0
+            
+            # Recompute offsets
+            new_seqlen_offsets = torch.ops.fbgemm.asynchronous_complete_cumsum(new_seqlen)
+            
+            # Verify invariant
+            print_rank_0(f"Truncated tokens to {aligned_size} from {num_tokens} for FP8 TE compatibility")
+            assert new_seqlen_offsets[-1].item() == aligned_size, \
+                f"Offset mismatch: {new_seqlen_offsets[-1].item()} != {aligned_size}"
+
+        # TODO: verify padding logic with attention kernel
+        elif fp8_alignment_mode == "pad":
+            # Pad: Add tokens to the end to reach aligned size
+            # Leave seqlen unchanged, attn mask in attn kernel should ignore the rest
+            padding_needed = aligned_size - num_tokens
+            jd.values = torch.nn.functional.pad(jd.values, (0, 0, 0, padding_needed))
+            
+            print_rank_0(f"Padded tokens to {aligned_size} from {num_tokens} for FP8 TE compatibility (as ghost tokens)")
+            
+            # No need to update seqlen or offsets - padding is invisible to the model
+            return jd
         
         return JaggedData(
             values=jd.values,

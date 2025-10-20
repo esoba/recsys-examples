@@ -185,6 +185,7 @@ class MixedPrecisionArgs:
     linear_recipe: Literal["delayed", "tensorwise", "blockwise"] = "tensorwise"
     linear_scaling_precision: Literal["hybrid", "e4m3", "e5m2"] = "hybrid"
     enable_fp8_for_prediction_head: bool = False  # Experimental feature - prediction head has variable batch size and TE requires batch size to be divisible by 8
+    fp8_alignment_mode: Literal["truncate", "pad"] = "truncate"
     hstu_attn_quantization_mode: Literal["bf16", "fp8", "1xdim", "128x1", "per-block", "per-head", "per-batch", "per-tensor"] = "bf16"
     hstu_attn_quantization_map: Dict[str, int] = field(
         default_factory=lambda: {
