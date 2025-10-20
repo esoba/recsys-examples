@@ -1,0 +1,106 @@
+"""Test te column/row parallel linear"""
+from megatron.core.extensions.transformer_engine import (
+    TEColumnParallelLinear,
+    TERowParallelLinear,
+)
+from megatron.core.transformer.module import MegatronModule
+from configs.hstu_config import HSTUConfig
+from megatron.core import parallel_state
+import torch
+import torch.nn.functional as F
+import torch.nn as nn
+import transformer_engine.pytorch as te
+import commons.utils.initialize as init
+
+class TestMegatronSplit(MegatronModule):
+    def __init__(self, config: HSTUConfig):
+        self.config = config
+        super().__init__(config=config)
+        self._tp_size = parallel_state.get_tensor_model_parallel_world_size()
+
+        self._linear_uvqk = TEColumnParallelLinear(
+            input_size=128,
+            output_size=128*4*4,
+            init_method=config.init_method,
+            config=config,
+            bias=True,
+            gather_output=False,
+            skip_bias_add=False,  # note: TEColumnParallelLinear does not support bias fusion!
+            is_expert=False,
+        )
+
+        self._linear_proj = TERowParallelLinear(
+            input_size=128*4,  # num_heads * head_dim, NOT output of column parallel
+            output_size=128,
+            init_method=config.init_method,
+            config=config,
+            input_is_parallel=True,
+            bias=False,
+            skip_bias_add=False,
+            is_expert=False,
+        )
+
+    def forward(self, x: torch.Tensor):
+        x, _ = self._linear_uvqk(x)
+        x = F.silu(x)
+        x = x.view(-1, 4//self._tp_size, 128*4)
+        u, v, q, k = torch.split(x, [128, 128, 128, 128], dim=-1)
+        x = F.scaled_dot_product_attention(q, k, v, is_causal=self.config.is_causal)
+        # Reshape attention output from [batch*seq, num_heads_per_partition, head_dim]
+        # to [batch*seq, num_heads_per_partition * head_dim] for row parallel linear
+        x = x.reshape(-1, (4//self._tp_size) * 128)
+        print(x, flush=True)
+        print(x.shape, flush=True)
+        x, _ = self._linear_proj(x)
+        return x
+
+
+def simple_train(config):
+    model = TestMegatronSplit(config)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    for i in range(100):
+        x = torch.randn(16, 1024, 128, dtype=config.params_dtype).cuda()
+        label = torch.randn(16384, 128, dtype=config.params_dtype).cuda()
+        with te.fp8_autocast():
+            y = model(x)
+        loss = torch.nn.functional.mse_loss(y, label, reduction="sum").cuda()
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+
+if __name__ == "__main__":
+    init.initialize_distributed()
+    init.initialize_model_parallel(
+        tensor_model_parallel_size=2
+    )
+    config = HSTUConfig(  # type: ignore
+        hidden_size=128,
+        kv_channels=128,
+        num_attention_heads=4,
+        hidden_dropout=0.2,
+        layernorm_epsilon=1e-5,
+        num_layers=1,
+        bf16=False,
+        tensor_model_parallel_size=parallel_state.get_tensor_model_parallel_world_size(),
+        pipeline_model_parallel_size=parallel_state.get_pipeline_model_parallel_world_size(),
+        context_parallel_size=parallel_state.get_pipeline_model_parallel_world_size(),
+        fp16=True,
+        is_causal=True,
+        target_group_size=1,
+        learnable_input_layernorm=True,
+        residual=True,
+        async_wgrad=False,
+        async_wgrad_stream=None,
+        async_wgrad_event=None,
+        recompute_input_layernorm=False,
+        recompute_input_silu=False,
+        add_uvqk_bias=True,
+        is_inference=False,
+        fuse_norm_mul_dropout=True,
+        hstu_attn_quantization_mode=0,
+        fp8="hybrid",
+        fp8_recipe="tensorwise",
+        params_dtype = torch.bfloat16,  # From Megatron config
+    )
+    simple_train(config)
