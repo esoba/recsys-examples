@@ -304,12 +304,12 @@ class HSTUBlockPreprocessor(torch.nn.Module):
             training=self.training,
         ).to(self._training_dtype)
 
-        # FP8 alignment: Truncate to nearest multiple of 8 for TE Linear compatibility
-        # TODO: Verify this is the correct way to handle FP8 TE size mismatches
+        # FP8 alignment: Truncate to nearest multiple of 16 for TE Linear fwd + bwdcompatibility
+        # TODO: Add padding methodology as well
         if not isinstance(self.config, InferenceHSTUConfig):
             if self.config.fp8 is not None and self.training:
-                warnings.warn("Aligning JaggedData to nearest multiple of 8 for FP8 TE compatibility")
-                jd = self._align_jagged_data_for_fp8(jd, divisor=16)  # TODO: Find workaround for alignment
+                warnings.warn("Aligning JaggedData to nearest multiple of 16 for FP8 TE fwd + bwd compatibility")
+                jd = self._align_jagged_data_for_fp8(jd, divisor=16)
 
         return jd
     
@@ -324,7 +324,7 @@ class HSTUBlockPreprocessor(torch.nn.Module):
         
         Args:
             jd: Input JaggedData
-            divisor: Alignment divisor (8 for FP8 batch dimension requirement)
+            divisor: Alignment divisor (16 for FP8 batch dimension requirement)
             
         Returns:
             Aligned JaggedData with maintained invariants

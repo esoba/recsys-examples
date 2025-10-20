@@ -15,12 +15,12 @@
 
 import os
 from functools import partial
+import warnings
 
 import nvtx
 import torch
 import torch.nn.functional as F
 from commons.utils.clear_tensor_data import clear_tensor_data
-from commons.utils.logger import print_rank_0
 from commons.utils.nvtx_op import output_nvtx_hook, register_setter_and_getter_for_nvtx
 from configs import HSTUConfig
 from configs.hstu_config import HSTULayerType
@@ -219,21 +219,8 @@ class HSTULayer(MegatronModule):
                     eps=self._eps,
                 )
 
-        print_rank_0(f"Recomputed layer norm {self._recompute_input_layernorm}")
-        print_rank_0(f"Normed x has any NaNs: {torch.isnan(normed_x).any()}")
-        print_rank_0(f"Normed x min/max: {normed_x.min():.4f} / {normed_x.max():.4f}")
-
         with nvtx.annotate("hstu uvqk linear_silu fwd", color="BLUE"):
             tu, tv, tq, tk = self.get_user_value_query_key_tensors(normed_x)
-
-        print_rank_0(f"tu linear_silu output has any NaNs: {torch.isnan(tu).any()}")
-        print_rank_0(f"tu linear_silu output min/max: {tu.min():.4f} / {tu.max():.4f}")
-        print_rank_0(f"tv linear_silu output has any NaNs: {torch.isnan(tv).any()}")
-        print_rank_0(f"tv linear_silu output min/max: {tv.min():.4f} / {tv.max():.4f}")
-        print_rank_0(f"tq linear_silu output has any NaNs: {torch.isnan(tq).any()}")
-        print_rank_0(f"tq linear_silu output min/max: {tq.min():.4f} / {tq.max():.4f}")
-        print_rank_0(f"tk linear_silu output has any NaNs: {torch.isnan(tk).any()}")
-        print_rank_0(f"tk linear_silu output min/max: {tk.min():.4f} / {tk.max():.4f}")
 
         # TODO: remove contiguous once cutlass backend is ready
         with nvtx.annotate("hstu attn fwd", color="BLUE"):
@@ -248,23 +235,17 @@ class HSTULayer(MegatronModule):
                 target_group_size=self._target_group_size,
             )
             
-            # TODO: Remove this once the attention kernel outputs consistent dtype - just precaution
-            print_rank_0(f"Jagged attn output dtype post-attn: {jagged_attn_output.dtype}")
+            # TODO: Remove this once the attention kernel outputs consistent dtype
             expected_dtype = torch.bfloat16 if self.config.bf16 else torch.float16
             if jagged_attn_output.dtype != expected_dtype:
+                warnings.warn(f"Jagged attn output dtype mismatch: {jagged_attn_output.dtype} != {expected_dtype}. Casting to {expected_dtype}.")
                 jagged_attn_output = jagged_attn_output.to(expected_dtype, non_blocking=True)
-
-            print_rank_0(f"Jagged attn output has any NaNs: {torch.isnan(jagged_attn_output).any()}")
-            print_rank_0(f"Jagged attn output min/max: {jagged_attn_output.min():.4f} / {jagged_attn_output.max():.4f}")
 
         with nvtx.annotate("hstu norm mul dropout fwd", color="GREEN"):
             if self._debug_shortcut_output_ln_mul_dropout:
                 parallel_input = jagged_attn_output
             else:
                 parallel_input = self._output_ln_dropout_mul(jagged_attn_output, tu)
-        
-        print_rank_0(f"Parallel input has any NaNs: {torch.isnan(parallel_input).any()}")
-        print_rank_0(f"Parallel input min/max: {parallel_input.min():.4f} / {parallel_input.max():.4f}")
 
         if self._recompute_input_silu:
             # when output grad (gemm dgrad) is computed, trigger the recompute of the silu
@@ -280,14 +261,9 @@ class HSTULayer(MegatronModule):
             else:
                 output, _ = self._linear_proj(parallel_input)
 
-            print_rank_0(f"Output linear proj has any NaNs: {torch.isnan(output).any()}")
-            print_rank_0(f"Output linear projmin/max: {output.min():.4f} / {output.max():.4f}")
-
             if self._residual:
                 output = output + x
 
-        print_rank_0(f"Output has any NaNs: {torch.isnan(output).any()}")
-        print_rank_0(f"Layer output min/max: {output.min():.4f} / {output.max():.4f}")
         return JaggedData(
             values=output,
             seqlen=jd.seqlen,

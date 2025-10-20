@@ -13,7 +13,6 @@ from modules.hstu_processor import HSTUBlockPostprocessor, HSTUBlockPreprocessor
 from modules.jagged_data import JaggedData
 from modules.native_hstu_layer import HSTULayer as NativeHSTULayer
 from torchrec.sparse.jagged_tensor import JaggedTensor
-from commons.utils.logger import print_rank_0
 
 
 class HSTUBlock(MegatronModule):
@@ -67,8 +66,6 @@ class HSTUBlock(MegatronModule):
         """
         jd = self._preprocessor(embeddings, batch)
         seqlen_after_preprocessor = jd.seqlen
-        print_rank_0(f"jd any NaNs: {torch.isnan(jd.values).any()}") if jd.values.numel() > 0 else print_rank_0("jd values is empty")
-        print_rank_0(f"jd min/max: {jd.values.min():.4f} / {jd.values.max():.4f}") if jd.values.numel() > 0 else print_rank_0("jd values is empty")
         for hstu_layer in self._attention_layers:
             jd = hstu_layer(jd)
         return self._postprocessor(jd), seqlen_after_preprocessor
