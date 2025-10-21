@@ -27,7 +27,6 @@ from modules.mlp import MLP
 from modules.multi_task_loss_module import MultiTaskLossModule
 from torchrec.sparse.jagged_tensor import JaggedTensor
 
-
 class RankingGR(BaseModel):
     """
     A class representing the ranking model. Inherits from BaseModel. A ranking model consists of
@@ -53,7 +52,6 @@ class RankingGR(BaseModel):
         self._embedding_collection = ShardedEmbedding(task_config.embedding_configs)
 
         self._hstu_block = HSTUBlock(hstu_config)
-        print("fp8 from config", hstu_config.fp8)
         self._mlp = MLP(
             hstu_config.hidden_size,
             task_config.prediction_head_arch,
@@ -111,6 +109,7 @@ class RankingGR(BaseModel):
         """
         # DMP embedding
         embeddings: Dict[str, JaggedTensor] = self._embedding_collection(batch.features)
+        
         # maybe freeze embedding for debugging
         embeddings = self._embedding_collection._maybe_detach(embeddings)
         # For model-parallel embedding, torchrec does gradient division by (tp_size * dp_size). However, we only need to divide by dp size. In such case, we need to scale the gradient by tp_size.
