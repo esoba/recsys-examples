@@ -16,6 +16,7 @@ from megatron.core.transformer.module import Float16Module
 from megatron.core.distributed import DistributedDataParallel as DDP
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig, get_megatron_optimizer
+from megatron.core.distributed import finalize_model_grads
 
 global_recipe = Float8CurrentScaling(fp8_format = Format.HYBRID)
 class TestMegatronSplit(MegatronModule):
@@ -23,6 +24,7 @@ class TestMegatronSplit(MegatronModule):
         self.config = config
         super().__init__(config=config)
         self._tp_size = parallel_state.get_tensor_model_parallel_world_size()
+        print(f"tp_size = {self._tp_size}")
 
         self._linear_uvqk = TEColumnParallelLinear(
             input_size=128,
@@ -55,8 +57,8 @@ class TestMegatronSplit(MegatronModule):
         # Reshape attention output from [batch*seq, num_heads_per_partition, head_dim]
         # to [batch*seq, num_heads_per_partition * head_dim] for row parallel linear
         x = x.reshape(-1, (4//self._tp_size) * 128)
-        print(x, flush=True)
-        print(x.shape, flush=True)
+        # print(x, flush=True)
+        # print(x.shape, flush=True)
         x, _ = self._linear_proj(x)
         return x
 
@@ -86,7 +88,6 @@ def simple_train(config):
         weight_decay=0.0,
     )
     optimizer = get_megatron_optimizer(dense_optimizer_config, [model])
-    print(optimizer)
     for i in range(100):
         optimizer.zero_grad()
         x = torch.randn(16, 1024, 128).cuda()
@@ -95,8 +96,8 @@ def simple_train(config):
             y = model(x)
             loss = torch.nn.functional.mse_loss(y.float(), label.float(), reduction="sum").cuda()
         loss.backward()
+        finalize_model_grads([model], None)
         optimizer.step()
-
 
 if __name__ == "__main__":
     init.initialize_distributed()
@@ -132,5 +133,4 @@ if __name__ == "__main__":
         fp8_recipe="tensorwise",
         # params_dtype = torch.bfloat16,  # From Megatron config
     )
-    print(config.params_dtype)
     simple_train(config)
