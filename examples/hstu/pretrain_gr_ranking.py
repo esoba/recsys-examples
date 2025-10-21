@@ -148,6 +148,36 @@ def main():
         dynamicemb_options_dict=dynamic_options_dict,
         pipeline_type=trainer_args.pipeline_type,
     )
+    print_rank_0(f"=== DEBUGGING MODEL DTYPE ===")
+    print_rank_0(f"Config bf16: {hstu_config.bf16}")
+    print_rank_0(f"Config fp16: {hstu_config.fp16}")
+    print_rank_0(f"Config params_dtype: {hstu_config.params_dtype if hasattr(hstu_config, 'params_dtype') else 'N/A'}")
+
+    print_rank_0(f"\nModel wrapper structure:")
+    print_rank_0(f"model_train type: {type(model_train)}")
+    print_rank_0(f"model_train.module type: {type(model_train.module) if hasattr(model_train, 'module') else 'N/A'}")
+
+    # Check if Float16Module exists
+    has_float16 = False
+    current = model_train
+    depth = 0
+    while hasattr(current, 'module') and depth < 5:
+        print_rank_0(f"  Depth {depth}: {type(current)}")
+        if type(current).__name__ == 'Float16Module':
+            has_float16 = True
+            print_rank_0(f"    ✓ Found Float16Module at depth {depth}")
+            print_rank_0(f"    Float16Module.fp16: {current.fp16}")
+            print_rank_0(f"    Float16Module.bf16: {current.bf16}")
+        current = current.module
+        depth += 1
+
+    print_rank_0(f"\nParameter dtypes (first 10):")
+    count = 0
+    for name, param in model_train.named_parameters():
+        print_rank_0(f"  {name}: {param.dtype}, shape: {param.shape}")
+        count += 1
+        if count >= 10:
+            break
 
     stateful_metric_module = get_multi_event_metric_module(
         num_classes=task_config.prediction_head_arch[-1],

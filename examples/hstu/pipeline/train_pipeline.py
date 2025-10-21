@@ -41,6 +41,7 @@ from typing import (
 import nvtx
 import torch
 from commons.utils.distributed_utils import collective_assert
+from commons.utils.logger import print_rank_0
 from distributed.finalize_model_grads import finalize_model_grads
 from megatron.core import parallel_state
 from megatron.core.distributed.distributed_data_parallel import DistributedDataParallel
@@ -390,6 +391,7 @@ class TrainPipelineSparseDist(TrainPipeline[In, Out]):
         # forward
         with record_function("## forward ##"):
             if use_te:
+                print_rank_0(f"TE enabled = {self._te_mixed_precision}, with recipe {self.recipe}")
                 with te.fp8_autocast(enabled=self._te_mixed_precision, fp8_recipe=self.recipe):
                     losses, output = self._model_fwd(self.batches[0])
             else:
@@ -706,6 +708,7 @@ class PrefetchTrainPipelineSparseDist(TrainPipelineSparseDist[In, Out]):
         # forward
         with record_function("## forward ##"):
             if use_te:
+                print_rank_0(f"TE enabled = {self._te_mixed_precision}, with recipe {self.recipe}")
                 with te.fp8_autocast(enabled=self._te_mixed_precision, fp8_recipe=self.recipe):
                         losses, output = self._model_fwd(self._batch_i)
             else:
@@ -834,6 +837,7 @@ class JaggedMegatronTrainPipelineSparseDist(TrainPipelineSparseDist[In, Out]):
         # forward
         with nvtx.annotate("## forward ##"):
             if use_te:
+                print_rank_0(f"TE enabled = {self._te_mixed_precision}, with recipe {self.recipe}")
                 with te.fp8_autocast(enabled=self._te_mixed_precision, fp8_recipe=self.recipe):
                     losses, output = self._model_fwd(self.batches[0])
             else:
